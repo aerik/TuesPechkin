@@ -3,9 +3,17 @@ using System.Diagnostics;
 
 namespace TuesPechkin
 {
-    internal static class Tracer
+    public static class Tracer
     {
         private readonly static TraceSource source = new TraceSource("pechkin:default");
+
+        public static TraceSource Source
+        {
+            get
+            {
+                return source;
+            }
+        }
 
         public static void Trace(String message)
         {

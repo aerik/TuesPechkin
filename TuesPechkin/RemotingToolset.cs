@@ -46,7 +46,6 @@ namespace TuesPechkin
                 null,
                 null,
                 null,
-                null,
                 null);
 
             NestedToolset = handle.Unwrap() as IToolset;
@@ -99,6 +98,12 @@ namespace TuesPechkin
             var expected = Path.Combine(
                 Deployment.Path, 
                 WkhtmltoxBindings.DLLNAME);
+            if(expected.StartsWith(".") && File.Exists(expected))
+            {
+                //get the full path
+                FileInfo fi = new FileInfo(expected);
+                expected = fi.FullName;
+            }
 
             foreach (ProcessModule module in Process.GetCurrentProcess().Modules)
             {

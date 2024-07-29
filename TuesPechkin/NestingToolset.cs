@@ -17,6 +17,13 @@ namespace TuesPechkin
 
         protected IToolset NestedToolset { get; set; }
 
+        public TraceCallback TraceHandler{
+            get
+            {
+                return NestedToolset.TraceHandler;
+            }
+        }
+
         public abstract void Load(IDeployment deployment = null);
 
         public abstract void Unload();
@@ -142,6 +149,11 @@ namespace TuesPechkin
         public void SetWarningCallback(IntPtr converter, StringCallback callback)
         {
             NestedToolset.SetWarningCallback(converter, callback);
+        }
+
+        public void SetToolsetMessageCallback(TraceCallback callback)
+        {
+            NestedToolset.SetToolsetMessageCallback(callback);
         }
     }
 }

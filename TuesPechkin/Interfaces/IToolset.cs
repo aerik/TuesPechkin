@@ -34,6 +34,10 @@ namespace TuesPechkin
         /// </summary>
         IDeployment Deployment { get; }
 
+        TraceCallback TraceHandler { get; }
+
+        void SetToolsetMessageCallback(TraceCallback callback);
+
         #region calls to native API
         void AddObject(IntPtr converter, IntPtr objectConfig, byte[] html);
         void AddObject(IntPtr converter, IntPtr objectConfig, string html);

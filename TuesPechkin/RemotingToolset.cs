@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Runtime.Remoting;
+using System.Threading;
 
 namespace TuesPechkin
 {
@@ -21,6 +22,16 @@ namespace TuesPechkin
             }
 
             Deployment = deployment;
+            Tracer.Trace("T:" + Thread.CurrentThread.Name + " Iniitializing RemotingToolset [" + Thread.CurrentThread.ManagedThreadId + "]");
+
+            if (!WinApiHelper.SetDllDirectory(Deployment.Path))
+            {
+                int errCode = WinApiHelper.GetLastError();
+                if (errCode != 0)
+                {
+                    Tracer.Warn("T:" + Thread.CurrentThread.Name + " Found unknown error " + errCode + " while initializing RemotingToolset [" + Thread.CurrentThread.ManagedThreadId + "]");
+                }
+            }
         }
 
         public override void Load(IDeployment deployment = null)
@@ -48,10 +59,11 @@ namespace TuesPechkin
                 null,
                 null);
 
-            NestedToolset = handle.Unwrap() as IToolset;
-            NestedToolset.Load(Deployment);
-            Deployment = NestedToolset.Deployment;
-
+            TToolset toolset = handle.Unwrap() as TToolset;
+            toolset.SetToolsetMessageCallback(new TraceCallback(HandleToolsetMessage));
+            toolset.Load(Deployment);
+            Deployment = toolset.Deployment;
+            NestedToolset = toolset;
             Loaded = true;
         }
 
@@ -62,6 +74,10 @@ namespace TuesPechkin
             if (Loaded)
             {
                 TearDownAppDomain(null, EventArgs.Empty);
+            }
+            else
+            {
+                Tracer.Trace("T:" + Thread.CurrentThread.Name + " Nothing to unload...");
             }
         }
 
@@ -86,36 +102,24 @@ namespace TuesPechkin
 
         private void TearDownAppDomain(object sender, EventArgs e)
         {
-            if (remoteDomain == null)
+            if (remoteDomain == null || remoteDomain == AppDomain.CurrentDomain)
             {
                 return;
             }
 
-            OnBeforeUnload((ActionShim)(() => NestedToolset.Unload()));
-
-            AppDomain.Unload(remoteDomain);
-
-            var expected = Path.Combine(
-                Deployment.Path, 
-                WkhtmltoxBindings.DLLNAME);
-            if(expected.StartsWith(".") && File.Exists(expected))
+            OnBeforeUnload(null);//don't know what this does
+            NestedToolset.Unload();
+            Tracer.Trace("T:" + Thread.CurrentThread.Name + " unloading remote App Domain [" + Thread.CurrentThread.ManagedThreadId + "]");
+            try
             {
-                //get the full path
-                FileInfo fi = new FileInfo(expected);
-                expected = fi.FullName;
+                AppDomain.Unload(remoteDomain);
+            }
+            catch (Exception ex)
+            {
+                string appErr = ex.Message;
             }
 
-            foreach (ProcessModule module in Process.GetCurrentProcess().Modules)
-            {
-                if (module.FileName == expected)
-                {
-                    while (WinApiHelper.FreeLibrary(module.BaseAddress))
-                    {
-                    }
-
-                    break;
-                }
-            }
+            UnloadModule();
 
             remoteDomain = null;
             Loaded = false;
@@ -123,6 +127,52 @@ namespace TuesPechkin
             if (Unloaded != null)
             {
                 Unloaded(this, EventArgs.Empty);
+            }
+        }
+
+        private void HandleToolsetMessage(string message, TraceSeverity severity)
+        {
+            if (String.IsNullOrWhiteSpace(message)) return;
+            switch (severity)
+            {
+                case TraceSeverity.Trace:
+                    Tracer.Trace(message);
+                    break;
+                case TraceSeverity.Warn:
+                    Tracer.Warn(message);
+                    break;
+                case TraceSeverity.Critical:
+                    Tracer.Critical(message);
+                    break;
+            }
+        }
+
+        private void UnloadModule()
+        {
+            var expected = Path.Combine(
+                Deployment.Path,
+                WkhtmltoxBindings.DLLNAME);
+            if (expected.StartsWith(".") && File.Exists(expected))
+            {
+                //get the full path
+                FileInfo fi = new FileInfo(expected);
+                expected = fi.FullName;
+            }
+            Tracer.Trace("T:" + Thread.CurrentThread.Name + " checking for module " + WkhtmltoxBindings.DLLNAME);
+            foreach (ProcessModule module in Process.GetCurrentProcess().Modules)
+            {
+                if (module.FileName == expected)
+                {
+                    Tracer.Warn("T:" + Thread.CurrentThread.Name + " Module still loaded: " + module.FileName);
+                    int loops = 0;
+                    while (WinApiHelper.FreeLibrary(module.BaseAddress) && loops < 10)
+                    {
+                        loops++;
+                        Tracer.Trace("T:" + Thread.CurrentThread.Name + " Calling FreeLibrary for module: " + module.FileName);
+                    }
+
+                    break;
+                }
             }
         }
     }

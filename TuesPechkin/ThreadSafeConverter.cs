@@ -62,6 +62,7 @@ namespace TuesPechkin
         
         public void Invoke(ActionShim @delegate)
         {
+            if (@delegate == null) return;
             StartThread();
 
             // create the task

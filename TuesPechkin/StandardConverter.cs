@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 using ErrorEventArgs = TuesPechkin.ErrorEventArgs;
 
 namespace TuesPechkin
@@ -38,12 +39,20 @@ namespace TuesPechkin
 
         public event EventHandler<WarningEventArgs> Warning;
 
+        private readonly object _ConverterLocker = new object();
+
+        private IntPtr _ConvertPtr = IntPtr.Zero; 
+
         public virtual byte[] Convert(IDocument document)
         {
             Toolset.Load();
 
             ProcessingDocument = document;
             var converter = CreateConverter(document);
+            lock (_ConverterLocker)
+            {
+                _ConvertPtr = converter;
+            }
 
             Tracer.Trace(string.Format("T:{0} Created converter", Thread.CurrentThread.Name));
             
@@ -61,20 +70,45 @@ namespace TuesPechkin
             byte[] result = null;
 
             // run conversion process
-            if (!Toolset.PerformConversion(converter))
+            DateTime start = DateTime.Now;
+            bool isSuccess = Toolset.PerformConversion(converter);
+            double elapsed = (DateTime.Now - start).TotalMilliseconds;
+            Tracer.Trace(string.Format("T:{0} Conversion Progress Changed: converted in " + elapsed + "ms ["+Thread.CurrentThread.ManagedThreadId+"]", Thread.CurrentThread.Name));
+            if (!isSuccess)
             {
                 Tracer.Trace(string.Format("T:{0} Conversion failed, null returned", Thread.CurrentThread.Name));
             }
             else
             {
+                start = DateTime.Now;
                 // get output
                 result = Toolset.GetConverterResult(converter);
+                elapsed = (DateTime.Now - start).TotalMilliseconds;
+                Tracer.Trace(string.Format("T:{0} Conversion Progress Changed: got result in " + elapsed + "ms ["+Thread.CurrentThread.ManagedThreadId+"]", Thread.CurrentThread.Name));
             }
 
             Tracer.Trace(string.Format("T:{0} Releasing unmanaged converter", Thread.CurrentThread.Name));
-            Toolset.DestroyConverter(converter);
+            lock (_ConverterLocker)
+            {
+                _ConvertPtr = IntPtr.Zero;
+                Toolset.DestroyConverter(converter);
+                converter = IntPtr.Zero;
+            }
             ProcessingDocument = null;
             return result;
+        }
+
+
+        public virtual void Close()
+        {
+            lock (_ConverterLocker)
+            {
+                if (_ConvertPtr != IntPtr.Zero)
+                {
+                    Toolset.DestroyConverter(_ConvertPtr);
+                    _ConvertPtr = IntPtr.Zero;
+                }
+            }
         }
 
         private void OnBegin(IntPtr converter)
@@ -104,7 +138,7 @@ namespace TuesPechkin
 
         private void OnError(IntPtr converter, string errorText)
         {
-            Tracer.Warn(string.Format("T:{0} Conversion Error: {1}", Thread.CurrentThread.Name, errorText));
+            Tracer.Warn(string.Format("T:{0} Conversion Error: {1}", Thread.CurrentThread.ManagedThreadId, errorText));
 
             try
             {
@@ -178,7 +212,7 @@ namespace TuesPechkin
         {
             string progressDescription = Toolset.GetProgressDescription(converter);
 
-            Tracer.Trace(string.Format("T:{0} Conversion Progress Changed: ({1}) {2}", Thread.CurrentThread.Name, progress, progressDescription));
+            Tracer.Trace(string.Format("T:{0} Conversion Progress Changed: ({1}) {2} [{3}]", Thread.CurrentThread.Name, progress, progressDescription, Thread.CurrentThread.ManagedThreadId));
 
             try
             {
@@ -246,7 +280,6 @@ namespace TuesPechkin
                     Toolset.AddObject(converter, config, setting.GetData());
                 }
             }
-
             return converter;
         }
 

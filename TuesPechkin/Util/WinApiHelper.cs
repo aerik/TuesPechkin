@@ -13,5 +13,10 @@ namespace TuesPechkin
 
         [DllImport("kernel32", SetLastError = true)]
         public static extern bool SetDllDirectory(string lpPathName);
+
+        public static int GetLastError()
+        {
+            return Marshal.GetLastWin32Error();
+        }
     }
 }

@@ -4,7 +4,9 @@ using System.Diagnostics;
 using System.Drawing.Printing;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using TuesPechkin;
 
@@ -14,38 +16,66 @@ namespace Scratch
     {
         static void Main(string[] args)
         {
+            int maybeError = Marshal.GetLastWin32Error();
+            if(maybeError > 0)
+            {
+                Console.WriteLine("Found error on startup: " + maybeError);
+            }
             Trace.AutoFlush = true;
             var consoleTraceListener = new ConsoleTraceListener();
             Tracer.Source.Switch = new SourceSwitch("SourceSwitch", "Verbose");
             Tracer.Source.Listeners.Add(consoleTraceListener);
-            HtmlToPdfDocument document = GetDocument();
 
-            SavePDF(document, @".\test1.pdf");
-            System.Threading.Thread.Sleep(100);
-            SavePDF(document, @".\test2.pdf");
-            System.Threading.Thread.Sleep(100);
-            SavePDF(document, @".\test3.pdf");
-            System.Threading.Thread.Sleep(100);
-            SavePDF(document, @".\test4.pdf");
-            System.Threading.Thread.Sleep(100);
-            SavePDF(document, @".\test5.pdf");
+            SavePDF(@".\test1.pdf");
+
             Console.WriteLine("done");
             Console.ReadKey();
         }
 
-        private static void SavePDF(HtmlToPdfDocument document, string fileName)
+        private static void SavePDF(string fileName)
         {
             string path = Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location);
             var toolSet = new RemotingToolset<PdfToolset>(
-                new WinAnyCPUEmbeddedDeployment(
-                        new StaticDeployment(path)));//wkhtmltox.dll
+                        new StaticDeployment(path));//wkhtmltox.dll
 
-            var Converter = new ThreadSafeConverter(toolSet);
+            var Converter = new AsyncConverter(toolSet);
             byte[] pdfBytes = null;
+            HtmlToPdfDocument document = GetDocument();
+            try
+            {
+                CancellationTokenSource cts = new CancellationTokenSource();
+                pdfBytes = Converter.Convert(document);
+                Console.WriteLine("**** Done with first pass ****");
 
-            pdfBytes = Converter.Convert(document);
+                pdfBytes = Converter.Convert(document);
+                CancellationTokenSource tokenSource = new CancellationTokenSource();
+                var task = Converter.ConvertAsync(document,tokenSource.Token);
+                task.Wait(500);
+                tokenSource.Cancel();
+                if (task.IsCompleted && !task.IsCanceled && !task.IsFaulted)
+                {
+                    pdfBytes = task.Result;
+                }
+                tokenSource = new CancellationTokenSource();
+                task = Converter.ConvertAsync(document, tokenSource.Token);
+                task.Wait(5000);
+                tokenSource.Cancel();
+                if (task.IsCompleted && !task.IsCanceled && !task.IsFaulted)
+                {
+                    pdfBytes = task.Result;
+                }
+                Converter.Abort();
+            }
+            catch(AggregateException agg)
+            {
+                Exception x = agg.Flatten();
+            }
+            catch (Exception ex) {
+                Console.WriteLine("ERROR: " + ex.Message);
+            }
+
             toolSet.Unload();
-            File.WriteAllBytes(fileName, pdfBytes);
+            if(pdfBytes != null) File.WriteAllBytes(fileName, pdfBytes);
         }
 
         private static HtmlToPdfDocument GetDocument()

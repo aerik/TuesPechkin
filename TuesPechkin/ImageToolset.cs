@@ -17,6 +17,8 @@ namespace TuesPechkin
 
         public bool Loaded { get; private set; }
 
+        public TraceCallback TraceHandler { get; set; }
+
         public ImageToolset()
         {
         }
@@ -250,6 +252,11 @@ namespace TuesPechkin
             var output = new byte[len];
             Marshal.Copy(tmp, output, 0, output.Length);
             return output;
+        }
+
+        public void SetToolsetMessageCallback(TraceCallback callback)
+        {
+            throw new NotImplementedException();
         }
         #endregion
 

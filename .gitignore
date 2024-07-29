@@ -11,3 +11,5 @@ _ReSharper.*
 TestResults
 *.nupkg
 *.nuspec
+/.vs/TuesPechkin
+/TuesPechkin/.vs

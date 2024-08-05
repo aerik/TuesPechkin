@@ -1,168 +1,92 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using System.Reflection;
-using System.Security.Principal;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace TuesPechkin
 {
-    public sealed class AsyncConverter : StandardConverter, IConverter
+
+    public class AsyncConverter<AToolset> : MarshalByRefObject, IConverter, IDisposable where AToolset : MarshalByRefObject, IToolset
     {
-        public AsyncConverter(IToolset toolset)
-            : base(toolset)
-        {
-            toolset.Unloaded += (sender, args) =>
-            {
-                object obj = sender;
-                Abort();
-            };
+        private readonly SingleThreadObjectInvoker<ToolsetConverter<AToolset>> _Invoker;
+        private bool _IsDisposed;
 
-            if (toolset is NestingToolset)
+        public AsyncConverter(Func<AToolset> toolsetFactory)
+        {
+            if (toolsetFactory == null)
             {
-                //(toolset as NestingToolset).BeforeUnload += (sender, args) =>
-                //{
-                //    Invoke(sender as ActionShim);
-                //};
+                throw new ArgumentNullException("toolsetFactory");
             }
+            _Invoker = new SingleThreadObjectInvoker<ToolsetConverter<AToolset>>(()=> new ToolsetConverter<AToolset>(toolsetFactory));
+            _Invoker.InvokeAsync(ts => { ts.ProgressChange += new EventHandler<ProgressChangeEventArgs>(Ts_ProgressChange); });
+
+            Tracer.Trace(string.Format("T:{0} Created AsyncConverter", Thread.CurrentThread.Name));
         }
 
-        public override byte[] Convert(IDocument document)
+        private void Ts_ProgressChange(object sender, ProgressChangeEventArgs e)
         {
-            return ConvertAsync(document,CancellationToken.None).Result;
+            Tracer.Trace("Progress Changed called on thread " + Thread.CurrentThread.ManagedThreadId + " " + AppDomain.CurrentDomain.FriendlyName);
         }
 
-        public Task<byte[]> ConvertAsync(IDocument document, CancellationToken token)
+        public event EventHandler<BeginEventArgs> Begin;
+        public event EventHandler<WarningEventArgs> Warning;
+        public event EventHandler<ErrorEventArgs> Error;
+        public event EventHandler<PhaseChangeEventArgs> PhaseChange;
+        public event EventHandler<ProgressChangeEventArgs> ProgressChange;
+        public event EventHandler<FinishEventArgs> Finish;
+
+        public byte[] Convert(IDocument document)
         {
-            StartThread();
-            var tcs = new TaskCompletionSource<byte[]>();
-            if (!_Stopped && document != null)
-            {
-                lock (_QueueLock)
-                {
-                    if (token != CancellationToken.None)
-                    {
-                        token.Register(() =>
-                        {
-                            if (tcs.TrySetCanceled())
-                            {
-                                base.Close();
-                                Abort();
-                            }
-                        });
-                    }
-                    taskQueue.Enqueue(new TaskItem() { Document = document, Token = token, CompletionSource = tcs });
-                }
-            }
-            else
-            {
-                tcs.SetResult(null);
-            }
-            return tcs.Task;
+            return this.ConvertAsync(document).Result;
         }
 
-        
-
-
-        private Thread _InnerThread;
-
-        private readonly object _QueueLock = new object();
-
-        private readonly object _StartLock = new object();
-
-        private bool _Stopped = true;
-
-        private readonly Queue<TaskItem> taskQueue = new Queue<TaskItem>();
-
-        private void StartThread()
+        public Task<byte[]> ConvertAsync(IDocument document)
         {
-            if (!_Stopped) return;
-            Thread thread = null;
-            lock (_StartLock)
-            {
-                if (_InnerThread != null) StopThread();//shouldn't happen, but maybe on error?
-                _InnerThread = new Thread(Run)
-                {
-                    IsBackground = true
-                };
-                thread = _InnerThread;
-                _Stopped = false;
-            }
-            thread.Start();
+            return _Invoker.InvokeAsync(conv => conv.Convert(document));
         }
 
-        private void StopThread()
-        {
-            lock (_StartLock)
-            {
-                if (_InnerThread != null)
-                {
-                    while (_InnerThread.ThreadState != ThreadState.Stopped) { }
-
-                    _InnerThread = null;
-                }
-                _Stopped = true;
-            }
-            Toolset.Unload();
-        }
         public void Abort()
         {
-            lock (_StartLock)
-            { 
-                if( _InnerThread != null)
-                {
-                    Tracer.Warn(string.Format("T:{0} Aborting worker thread {1} [{2}]", Thread.CurrentThread.Name, _InnerThread.ManagedThreadId, Thread.CurrentThread.ManagedThreadId));
-                    if (_InnerThread.IsAlive) _InnerThread.Abort();
-                    _InnerThread = null;
-                }
-                _Stopped = true;
-            }
-            Toolset.Unload();
-        }
-
-        private void Run()
-        {
-            try
+            if(_Invoker != null)
             {
-                using (WindowsIdentity.Impersonate(IntPtr.Zero))
-                {
-                    Thread.CurrentPrincipal = new WindowsPrincipal(WindowsIdentity.GetCurrent());
-                }
-                while (!_Stopped)
-                {
-                    TaskItem item = null;
-                    lock (_QueueLock)
-                    {
-                        if (taskQueue.Count > 0)
-                        {
-                            item = taskQueue.Dequeue();
-                        }
-                    }
-                    if (item == null)
-                    {
-                        Thread.Sleep(100);
-                        continue;
-                    }
-                    if (item.Document == null || item.CompletionSource == null) continue;
-
-                    byte[] resultBytes = base.Convert(item.Document);
-                    if (!item.CompletionSource.Task.IsCompleted && !item.CompletionSource.Task.IsFaulted)
-                    {
-                        item.CompletionSource.SetResult(resultBytes);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                string err = ex.Message;
+                _Invoker.Abort();
             }
         }
 
-        private class TaskItem
+        protected virtual void Dispose(bool disposing)
         {
-            public IDocument Document { get; set; }
-            public CancellationToken Token { get; set; }
-            public TaskCompletionSource<byte[]> CompletionSource { get; set; }
+            if (!_IsDisposed)
+            {
+                if (disposing)
+                {
+                    // TODO: dispose managed state (managed objects)
+                }
+
+                // TODO: free unmanaged resources (unmanaged objects) and override finalizer
+                if(_Invoker != null)
+                {
+                    _Invoker.Dispose();
+                }
+                _IsDisposed = true;
+            }
+        }
+
+        // TODO: override finalizer only if 'Dispose(bool disposing)' has code to free unmanaged resources
+        ~AsyncConverter()
+        {
+            // Do not change this code. Put cleanup code in 'Dispose(bool disposing)' method
+            Dispose(disposing: false);
+        }
+
+        public void Dispose()
+        {
+            // Do not change this code. Put cleanup code in 'Dispose(bool disposing)' method
+            Dispose(disposing: true);
+            GC.SuppressFinalize(this);
         }
     }
 }

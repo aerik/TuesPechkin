@@ -10,13 +10,19 @@ using System.Threading;
 
 namespace TuesPechkin
 {
-    public sealed class PdfToolset : MarshalByRefObject, IToolset
+    public sealed class PdfToolset : MarshalByRefObject, IToolset, IDisposable
     {
         public event EventHandler Unloaded;
 
         public IDeployment Deployment { get; private set; }
 
-        public bool Loaded { get; private set; }
+
+        private bool _Loaded = false;
+        public bool Loaded { 
+            get {
+                return _Loaded;
+            } 
+        }
 
         public TraceCallback TraceHandler { get; private set; }
 
@@ -24,6 +30,7 @@ namespace TuesPechkin
 
         public PdfToolset()
         {
+            Tracer.Trace("Created PDF toolset on thread " + Thread.CurrentThread.ManagedThreadId + " " + AppDomain.CurrentDomain.FriendlyName);
         }
 
         public PdfToolset(IDeployment deployment)
@@ -32,13 +39,13 @@ namespace TuesPechkin
             {
                 throw new ArgumentNullException("deployment");
             }
-
+            Tracer.Trace("Created PDF toolset on thread " + Thread.CurrentThread.ManagedThreadId + " " + AppDomain.CurrentDomain.FriendlyName);
             Deployment = deployment;
         }
 
         public void Load(IDeployment deployment = null)
         {
-            if (Loaded)
+            if (_Loaded)
             {
                 return;
             }
@@ -53,7 +60,7 @@ namespace TuesPechkin
             if (_wkhtmltoxPtr != IntPtr.Zero)
             {
                 int initRes = WkhtmltoxBindings.wkhtmltopdf_init(0);
-                Loaded = true;
+                _Loaded = true;
                 HandleTraceMessage("T:" + Thread.CurrentThread.Name + " Loaded library: " + WkhtmltoxBindings.DLLNAME);
             }
             else
@@ -65,8 +72,9 @@ namespace TuesPechkin
 
         public void Unload()
         {
-            if (Loaded)
+            if (_Loaded)
             {
+                _Loaded = false;
                 int dres = WkhtmltoxBindings.wkhtmltopdf_deinit();
                 if (_wkhtmltoxPtr != IntPtr.Zero)
                 {
@@ -108,6 +116,7 @@ namespace TuesPechkin
                 HandleTraceMessage("T:" + Thread.CurrentThread.Name + " Nothing to unload...", TraceSeverity.Warn);
             }
         }
+
         private void UnloadModule()
         {
             var expected = Path.Combine(
@@ -398,5 +407,36 @@ namespace TuesPechkin
         #endregion
 
         private DelegateRegistry pinnedCallbacks = new DelegateRegistry();
+        private bool disposedValue;
+
+        private void Dispose(bool disposing)
+        {
+            if (!disposedValue)
+            {
+                if (disposing)
+                {
+                    // TODO: dispose managed state (managed objects)
+                }
+
+                // TODO: free unmanaged resources (unmanaged objects) and override finalizer
+                Unload();
+                // TODO: set large fields to null
+                disposedValue = true;
+            }
+        }
+
+        // TODO: override finalizer only if 'Dispose(bool disposing)' has code to free unmanaged resources
+        ~PdfToolset()
+        {
+            // Do not change this code. Put cleanup code in 'Dispose(bool disposing)' method
+            Dispose(disposing: false);
+        }
+
+        void IDisposable.Dispose()
+        {
+            // Do not change this code. Put cleanup code in 'Dispose(bool disposing)' method
+            Dispose(disposing: true);
+            GC.SuppressFinalize(this);
+        }
     }
 }

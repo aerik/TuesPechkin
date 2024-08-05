@@ -11,7 +11,7 @@ namespace TuesPechkin
     /// Deployments loaded with this class must be marked Serializable.
     /// </summary>
     /// <typeparam name="TToolset">The type of toolset to manage remotely.</typeparam>
-    public sealed class RemotingToolset<TToolset> : NestingToolset
+    public sealed class RemotingToolset<TToolset> : NestingToolset, IDisposable
         where TToolset : MarshalByRefObject, IToolset, new()
     {
         public RemotingToolset(IDeployment deployment)
@@ -22,7 +22,15 @@ namespace TuesPechkin
             }
 
             Deployment = deployment;
-            Tracer.Trace("T:" + Thread.CurrentThread.Name + " Iniitializing RemotingToolset [" + Thread.CurrentThread.ManagedThreadId + "]");
+        }
+
+        public override void Load(IDeployment deployment = null)
+        {
+            if (Loaded)
+            {
+                return;
+            }
+            Tracer.Trace("T:" + Thread.CurrentThread.Name + " Loading RemotingToolset [" + Thread.CurrentThread.ManagedThreadId + "]");
 
             if (!WinApiHelper.SetDllDirectory(Deployment.Path))
             {
@@ -32,15 +40,6 @@ namespace TuesPechkin
                     Tracer.Warn("T:" + Thread.CurrentThread.Name + " Found unknown error " + errCode + " while initializing RemotingToolset [" + Thread.CurrentThread.ManagedThreadId + "]");
                 }
             }
-        }
-
-        public override void Load(IDeployment deployment = null)
-        {
-            if (Loaded)
-            {
-                return;
-            }
-
             if (deployment != null)
             {
                 Deployment = deployment;
@@ -74,6 +73,7 @@ namespace TuesPechkin
             if (Loaded)
             {
                 TearDownAppDomain(null, EventArgs.Empty);
+                Loaded = false;
             }
             else
             {
@@ -82,6 +82,7 @@ namespace TuesPechkin
         }
 
         private AppDomain remoteDomain;
+        private bool disposedValue;
 
         private void SetupAppDomain()
         {
@@ -122,7 +123,6 @@ namespace TuesPechkin
             UnloadModule();
 
             remoteDomain = null;
-            Loaded = false;
 
             if (Unloaded != null)
             {
@@ -174,6 +174,35 @@ namespace TuesPechkin
                     break;
                 }
             }
+        }
+
+        private void Dispose(bool disposing)
+        {
+            if (!disposedValue)
+            {
+                if (disposing)
+                {
+                    // TODO: dispose managed state (managed objects)
+                }
+
+                // TODO: free unmanaged resources (unmanaged objects) and override finalizer
+                Unload();
+                disposedValue = true;
+            }
+        }
+
+        // TODO: override finalizer only if 'Dispose(bool disposing)' has code to free unmanaged resources
+        ~RemotingToolset()
+        {
+            // Do not change this code. Put cleanup code in 'Dispose(bool disposing)' method
+            Dispose(disposing: false);
+        }
+
+        void IDisposable.Dispose()
+        {
+            // Do not change this code. Put cleanup code in 'Dispose(bool disposing)' method
+            Dispose(disposing: true);
+            GC.SuppressFinalize(this);
         }
     }
 }

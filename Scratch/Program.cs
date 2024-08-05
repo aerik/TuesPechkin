@@ -35,46 +35,49 @@ namespace Scratch
         private static void SavePDF(string fileName)
         {
             string path = Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location);
-            var toolSet = new RemotingToolset<PdfToolset>(
-                        new StaticDeployment(path));//wkhtmltox.dll
-
-            var Converter = new AsyncConverter(toolSet);
             byte[] pdfBytes = null;
-            HtmlToPdfDocument document = GetDocument();
-            try
+            using (var converter = new AsyncConverter<RemotingToolset<PdfToolset>>(() => new RemotingToolset<PdfToolset>(
+                        new StaticDeployment(path))))
             {
-                CancellationTokenSource cts = new CancellationTokenSource();
-                pdfBytes = Converter.Convert(document);
-                Console.WriteLine("**** Done with first pass ****");
-
-                pdfBytes = Converter.Convert(document);
-                CancellationTokenSource tokenSource = new CancellationTokenSource();
-                var task = Converter.ConvertAsync(document,tokenSource.Token);
-                task.Wait(500);
-                tokenSource.Cancel();
-                if (task.IsCompleted && !task.IsCanceled && !task.IsFaulted)
+                HtmlToPdfDocument document = GetDocument();
+                try
                 {
-                    pdfBytes = task.Result;
+                    CancellationTokenSource cts = new CancellationTokenSource();
+                    pdfBytes = converter.Convert(document);
+                    Console.WriteLine("**** Done with first pass ****");
+
+                    //pdfBytes = converter.Convert(document);
+                    //var task = converter.ConvertAsync(document);
+                    //task.Wait(55);
+                    //Console.WriteLine("Waited 55");
+                    //converter.Abort();
+                    //task.Wait(100);
+                    //Console.WriteLine("Task " + task.Status.ToString());
+                    //tokenSource.Cancel();
+                    //if (task.IsCompleted && !task.IsCanceled && !task.IsFaulted)
+                    //{
+                    //    pdfBytes = task.Result;
+                    //}
+                    //tokenSource = new CancellationTokenSource();
+                    //task = Converter.ConvertAsync(document, tokenSource.Token);
+                    //task.Wait(5000);
+                    //tokenSource.Cancel();
+                    //if (task.IsCompleted && !task.IsCanceled && !task.IsFaulted)
+                    //{
+                    //    pdfBytes = task.Result;
+                    //}
+                    //Converter.Abort();
                 }
-                tokenSource = new CancellationTokenSource();
-                task = Converter.ConvertAsync(document, tokenSource.Token);
-                task.Wait(5000);
-                tokenSource.Cancel();
-                if (task.IsCompleted && !task.IsCanceled && !task.IsFaulted)
+                catch (AggregateException agg)
                 {
-                    pdfBytes = task.Result;
+                    Exception x = agg.GetBaseException();
                 }
-                Converter.Abort();
-            }
-            catch(AggregateException agg)
-            {
-                Exception x = agg.Flatten();
-            }
-            catch (Exception ex) {
-                Console.WriteLine("ERROR: " + ex.Message);
+                catch (Exception ex)
+                {
+                    Console.WriteLine("ERROR: " + ex.Message);
+                }
             }
 
-            toolSet.Unload();
             if(pdfBytes != null) File.WriteAllBytes(fileName, pdfBytes);
         }
 

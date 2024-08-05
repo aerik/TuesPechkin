@@ -8,12 +8,25 @@ using System.Threading.Tasks;
 
 namespace TuesPechkin
 {
+    /// <summary>
+    /// Create an object and invoke it's methods on a dedicated thread
+    /// (c) Aerik Sylvan and Vet Rocket 2024, MIT license
+    /// </summary>
+    /// <typeparam name="T"></typeparam>
     public class SingleThreadObjectInvoker<T> : IDisposable where T : class
     {
         protected readonly T _Instance;
         private readonly DedicatedThreadTaskScheduler _Scheduler;
         private readonly TaskFactory _TaskFactory;
         private bool _Disposed = false;
+
+        public int QueuedTaskCount
+        {
+            get
+            {
+                return _Scheduler.QueuedTaskCount;
+            }
+        }
 
         public SingleThreadObjectInvoker(Func<T> factory)
         {
@@ -33,23 +46,30 @@ namespace TuesPechkin
             if (_Disposed) throw new ObjectDisposedException(nameof(SingleThreadObjectInvoker<T>));
             return _TaskFactory.StartNew(() => action(_Instance));
         }
+        //arbitrary action not attached the the _Instance
+        public Task InvokeAsync(Action action)
+        {
+            if (_Disposed) throw new ObjectDisposedException(nameof(SingleThreadObjectInvoker<T>));
+            return _TaskFactory.StartNew(action);
+        }
 
         private Task InvokeInternal(Action<T> action)
         {
+            //no check for _Disposed so we can queue a task during disposal
             return _TaskFactory.StartNew(() => action(_Instance));
         }
 
         public void Dispose()
         {
             if (_Disposed) return;
-            _Disposed = true;
+            _Disposed = true;//disallows any more external calls to queue tasks
             if (_Instance is IDisposable)
             {
-                Task dispTask = InvokeInternal(di => { 
+                //add task to dispose _Instance to end of task queue
+                Task dispTask = InvokeInternal(di => {
                     IDisposable disposable = di as IDisposable;
                     disposable.Dispose();
                 });
-                dispTask.Wait();
             }
             _Scheduler.Dispose();
         }
@@ -63,10 +83,15 @@ namespace TuesPechkin
             {
                 disposable = (IDisposable)_Instance;
             }
-            _Scheduler.Abort(()=> {
-                if(disposable != null) disposable.Dispose();
+            //this is the trick, pass the dispose function to be executed on the same thread
+            _Scheduler.Abort(() => {
+                if (disposable != null) disposable.Dispose();
             });
             _Scheduler.Dispose();
+        }
+        public void TestAbort(Action action)
+        {
+            _Scheduler.TestAbort(action);
         }
 
         private class DedicatedThreadTaskScheduler : TaskScheduler, IDisposable
@@ -78,7 +103,13 @@ namespace TuesPechkin
             private volatile bool _IsBusy = false;
             private volatile bool _CurrentSucceeded = true;
 
-            private delegate void Interruption(object state);
+            public int QueuedTaskCount
+            {
+                get
+                {
+                    return _Tasks.Count;
+                }
+            }
 
             public DedicatedThreadTaskScheduler()
             {
@@ -111,6 +142,7 @@ namespace TuesPechkin
                                 Action abortTask = (Action)tax.ExceptionState;
                                 abortTask();
                             }
+                            //ThreadAbortException gets rethrown, but I'm not exactly sure where it goes...
                         }
                         catch (InvalidOperationException)
                         {
@@ -155,10 +187,21 @@ namespace TuesPechkin
             {
                 if (_Disposed) return;
                 _Disposed = true;
+                try
+                {
+                    _Tasks.CompleteAdding();//do this before setting _Stopped                                               
+                    // DON'T wait for pending tasks
+                }
+                catch (ObjectDisposedException) { }
                 _Stopped = true;
-                _Tasks.CompleteAdding();
                 _Thread.Abort(action);
                 _Thread.Join();
+                _Tasks.Dispose();//redundant
+            }
+
+            public void TestAbort(Action action)
+            {
+                _Thread.Abort(action);
             }
 
             public void Dispose()
@@ -166,10 +209,16 @@ namespace TuesPechkin
                 if (!_Disposed)
                 {
                     _Disposed = true;
+                    try
+                    {
+                        _Tasks.CompleteAdding();//do this before setting _Stopped                                               
+                        Task.WaitAll(_Tasks.ToArray()); //wait for pending tasks
+                    }
+                    catch (ObjectDisposedException) { }
                     _Stopped = true;
-                    _Tasks.CompleteAdding();
                 }
                 _Thread.Join();
+                _Tasks.Dispose();//redundant
             }
         }
     }
